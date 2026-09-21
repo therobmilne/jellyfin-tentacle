@@ -144,5 +144,50 @@ class SonarrScan(_Base):
         self.assertEqual(3, self._rows())
 
 
+class RequestsFollowTheTitle(_Base):
+    """A download request outliving the title it was for (#107).
+
+    The orphan sweep drops a title's DownloadRequest with the row; the scans did
+    not, leaving a stale "My Downloads" entry -- and the requester keeps delete
+    rights over that TMDB id if the title ever comes back.
+    """
+
+    def _user(self):
+        u = self.mdb.TentacleUser(jellyfin_user_id="u1", display_name="alice", is_admin=False)
+        self.db.add(u)
+        self.db.commit()
+        return u.id
+
+    def _requests(self, media_type):
+        return {r.tmdb_id for r in self.db.query(self.mdb.DownloadRequest).filter_by(media_type=media_type)}
+
+    def test_a_movie_that_left_radarr_takes_its_request_with_it(self):
+        uid = self._user()
+        RadarrScan._seed(self)
+        for i in (0, 1):
+            self.db.add(self.mdb.DownloadRequest(tmdb_id=1000 + i, media_type="movie", user_id=uid))
+        self.db.commit()
+        RadarrScan._scan(self, [_radarr_movie(i) for i in range(1, self.N)])     # film 0 removed from Radarr
+        self.assertEqual({1001}, self._requests("movie"))
+
+    def test_a_movie_still_in_radarr_without_a_file_keeps_its_request(self):
+        """That is a download still pending, not a title that went away."""
+        uid = self._user()
+        RadarrScan._seed(self)
+        self.db.add(self.mdb.DownloadRequest(tmdb_id=1000, media_type="movie", user_id=uid))
+        self.db.commit()
+        RadarrScan._scan(self, [_radarr_movie(i, has_file=(i != 0)) for i in range(self.N)])
+        self.assertEqual({1000}, self._requests("movie"))
+
+    def test_a_series_that_left_sonarr_takes_its_request_with_it(self):
+        uid = self._user()
+        SonarrScan._seed(self)
+        for i in (0, 1):
+            self.db.add(self.mdb.DownloadRequest(tmdb_id=3000 + i, media_type="series", user_id=uid))
+        self.db.commit()
+        SonarrScan._scan(self, [_sonarr_show(i) for i in range(1, self.N)])
+        self.assertEqual({3001}, self._requests("series"))
+
+
 if __name__ == "__main__":
     unittest.main()

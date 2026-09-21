@@ -711,6 +711,14 @@ def scan_sonarr_library(db: Session) -> dict:
                 kind="sonarr-scan", media_type="series", reason="removed-from-sonarr", name=series.title,
                 detail="no longer in Sonarr" if series.tmdb_id not in listed_tmdb_ids
                 else "Sonarr reports no episode files"))
+            if series.tmdb_id not in listed_tmdb_ids:
+                # Gone from the *arr altogether: the request goes with the title,
+                # as it does in the orphan sweep. Still listed but without a
+                # file is a download still pending -- that request stays.
+                db.query(DownloadRequest).filter(
+                    DownloadRequest.tmdb_id == series.tmdb_id,
+                    DownloadRequest.media_type == "series",
+                ).delete(synchronize_session=False)
             db.delete(series)
             removed += 1
     if removed:

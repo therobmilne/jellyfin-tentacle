@@ -321,6 +321,14 @@ def scan_radarr_library(db: Session) -> dict:
                 name=f"{movie.title} ({movie.year})" if movie.year else movie.title,
                 detail="no longer in Radarr" if movie.tmdb_id not in listed_tmdb_ids
                 else "Radarr reports no file"))
+            if movie.tmdb_id not in listed_tmdb_ids:
+                # Gone from the *arr altogether: the request goes with the title,
+                # as it does in the orphan sweep. Still listed but without a
+                # file is a download still pending -- that request stays.
+                db.query(DownloadRequest).filter(
+                    DownloadRequest.tmdb_id == movie.tmdb_id,
+                    DownloadRequest.media_type == "movie",
+                ).delete(synchronize_session=False)
             db.delete(movie)
             removed += 1
     if removed:
