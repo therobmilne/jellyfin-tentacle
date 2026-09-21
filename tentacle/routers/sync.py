@@ -850,8 +850,18 @@ def refresh_tags(db: Session = Depends(get_db)):
     jellyfin_key = get_setting(db, "jellyfin_api_key")
     jellyfin_uid = get_setting(db, "jellyfin_user_id", "")
     if jellyfin_url and jellyfin_key:
-        from services.jellyfin import JellyfinService
+        from services.jellyfin import JellyfinService, managed_tags, merge_managed_tags
         jf = JellyfinService(jellyfin_url, jellyfin_key, jellyfin_uid)
+        # Replace Tentacle's tags only. Writing `movie.tags` as the whole list
+        # wiped every tag a user had added by hand in Jellyfin (#107).
+        ours = managed_tags(db)
+
+        def _push(jf_item, desired):
+            existing = jf_item.get("Tags") or []
+            wanted = merge_managed_tags(existing, desired, ours)
+            if {t.casefold() for t in wanted} == {t.casefold() for t in existing}:
+                return True          # nothing to change: no POST
+            return jf.set_item_tags(jf_item["Id"], wanted)
 
         # Push tags for ALL movies (VOD + Radarr)
         all_movies = db.query(Movie).all()
@@ -868,7 +878,7 @@ def refresh_tags(db: Session = Depends(get_db)):
                     norm_title = JellyfinService._normalize_title(movie.title)
                     jf_item = jf_movie_title_lookup.get((norm_title, str(movie.year or "")))
                 if jf_item:
-                    if jf.set_item_tags(jf_item["Id"], movie.tags):
+                    if _push(jf_item, movie.tags):
                         jf_tagged += 1
                     else:
                         jf_errors += 1
@@ -893,7 +903,7 @@ def refresh_tags(db: Session = Depends(get_db)):
                     norm_title = JellyfinService._normalize_title(series.title)
                     jf_item = jf_series_title_lookup.get((norm_title, str(series.year or "")))
                 if jf_item:
-                    if jf.set_item_tags(jf_item["Id"], series.tags):
+                    if _push(jf_item, series.tags):
                         jf_tagged += 1
                     else:
                         jf_errors += 1

@@ -949,6 +949,52 @@ def sweep_orphaned_downloads(db) -> int:
     return orphans_removed
 
 
+MANAGED_TAGS_SETTING = "tentacle_managed_tags"
+
+
+def managed_tags(db) -> set:
+    """Every tag Tentacle manages or has ever managed -- and remember it.
+
+    "Refresh Tags" has to be able to take a stale tag OFF an item (a deleted
+    list, "Recently Added" expiring), so it cannot simply merge. But an item's
+    tags are not all Tentacle's: people tag things by hand in Jellyfin, and a
+    metadata refresh imports TMDB keywords as tags. The only way to replace our
+    own tags and nobody else's is to know which ones are ours -- including the
+    ones no title carries any more, which is exactly when they need removing.
+    So the set only ever grows: everything on any title now, plus everything
+    recorded before.
+    """
+    import json
+    from models.database import Movie, Series, get_setting, set_setting
+    try:
+        known = set(json.loads(get_setting(db, MANAGED_TAGS_SETTING, "[]") or "[]"))
+    except (ValueError, TypeError):
+        known = set()
+    current = set()
+    for model in (Movie, Series):
+        for (tags,) in db.query(model.tags).all():
+            current.update(t for t in (tags or []) if isinstance(t, str) and t)
+    if not current.issubset(known):
+        known |= current
+        set_setting(db, MANAGED_TAGS_SETTING, json.dumps(sorted(known)))
+        db.commit()
+    return known
+
+
+def merge_managed_tags(existing, desired, managed) -> list:
+    """The tag list to write: `desired`, plus whatever on the item is not ours.
+
+    Compared case-insensitively, as Jellyfin does. Desired tags come first and
+    keep Tentacle's spelling."""
+    ours = {t.casefold() for t in managed} | {t.casefold() for t in desired}
+    out, seen = [], set()
+    for t in list(desired) + [t for t in existing if t.casefold() not in ours]:
+        if t.casefold() not in seen:
+            seen.add(t.casefold())
+            out.append(t)
+    return out
+
+
 def push_tags_to_jellyfin(db, log_prefix: str = "Pipeline") -> int:
     """Push tags from Tentacle DB to Jellyfin for all movies and series.
 
@@ -966,6 +1012,12 @@ def push_tags_to_jellyfin(db, log_prefix: str = "Pipeline") -> int:
 
     jf = JellyfinService(jf_url, jf_key, jf_uid)
     jf_tagged = 0
+    # Every push records what Tentacle tags with, so that Refresh Tags can later
+    # tell a stale tag of ours from a tag somebody added by hand (managed_tags).
+    try:
+        managed_tags(db)
+    except Exception:
+        logger.debug("Could not record managed tags", exc_info=True)
 
     # Push movie tags
     jf_movie_lookup, jf_movie_title_lookup = jf.get_tmdb_lookup_with_fallback("Movie")
