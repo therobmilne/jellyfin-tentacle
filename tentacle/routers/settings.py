@@ -405,10 +405,26 @@ def check_stale_files(db: Session = Depends(get_db)):
     shows_path = Path("/media/vod/shows")
     strm_count = 0
     nfo_count = 0
+    # Quote what the cleanup WOULD delete, from the same helpers it uses: in a
+    # merged library most .nfo files under these roots belong to Radarr/Sonarr
+    # and are left alone (#28), so counting every *.nfo overstated it.
+    from services.media_files import delete_movie_files, delete_series_files
     for vod_dir in [movies_path, shows_path]:
-        if vod_dir.exists():
-            strm_count += len(list(vod_dir.rglob("*.strm")))
-            nfo_count += len(list(vod_dir.rglob("*.nfo")))
+        if not vod_dir.exists():
+            continue
+        strms = len(list(vod_dir.rglob("*.strm")))
+        would = 0
+        if vod_dir == movies_path:
+            for f in vod_dir.rglob("*.strm"):
+                would += delete_movie_files(f, dry_run=True)
+        else:
+            for show in vod_dir.iterdir():
+                if show.is_dir() and any(show.rglob("*.strm")):
+                    would += delete_series_files(show, dry_run=True)
+                elif show.suffix.lower() == ".strm":
+                    would += delete_movie_files(show, dry_run=True)
+        strm_count += strms
+        nfo_count += max(0, would - strms)
 
     if strm_count == 0:
         return {"show": False}

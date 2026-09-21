@@ -73,6 +73,22 @@ class TestStaleFilesCleanup(unittest.TestCase):
         for f in self.keep:
             self.assertTrue(f.exists(), f"{f.relative_to(self.vod)} deleted")
 
+    def test_the_banner_counts_what_the_cleanup_would_actually_delete(self):
+        """The banner said "10 .nfo" where Start Fresh deleted 4: it counted every
+        *.nfo under the VOD roots, the delete only removes the ones that belong to
+        a .strm (#28). A number on a destructive confirm dialog must be the true one."""
+        offered = settings.check_stale_files(db=self.db)
+        self.assertTrue(offered["show"])
+        done = settings.delete_stale_files(body=settings.StaleFilesDelete(confirm=True), db=self.db)
+        self.assertEqual(done["deleted_strm"], offered["strm_count"])
+        self.assertEqual(done["deleted_nfo"], offered["nfo_count"],
+                         "the dialog promised a different number of .nfo files than were deleted")
+
+    def test_counting_deletes_nothing(self):
+        before = sorted(str(f) for f in self.vod.rglob("*"))
+        settings.check_stale_files(db=self.db)
+        self.assertEqual(before, sorted(str(f) for f in self.vod.rglob("*")))
+
     def test_start_fresh_refuses_once_tentacle_owns_content(self):
         """The GET only offers the cleanup on an empty install, but the POST does not
         re-check. After a sync it would delete every .strm Tentacle itself wrote."""

@@ -38,11 +38,13 @@ def _prune_empty_dirs(root: Path) -> None:
         pass
 
 
-def delete_movie_files(strm_path) -> int:
+def delete_movie_files(strm_path, dry_run: bool = False) -> int:
     """Delete a movie's .strm + .nfo and its folder if that leaves it empty.
 
     ``strm_path`` is the path of the .strm file itself. Returns the number of
-    files deleted.
+    files deleted. With ``dry_run`` nothing is touched and the return value is
+    what WOULD be deleted -- so a confirm dialog can quote the true number from
+    the same rules the delete uses.
     """
     if not strm_path:
         return 0
@@ -50,7 +52,8 @@ def delete_movie_files(strm_path) -> int:
     try:
         strm = Path(strm_path)
         if strm.suffix == ".strm" and strm.exists():
-            strm.unlink()
+            if not dry_run:
+                strm.unlink()
             deleted += 1
         # The NFO sits beside the .strm with the same stem. In a merged folder a
         # downloaded copy can share that stem ("Heat (1995).mkv"), and Radarr's
@@ -58,17 +61,18 @@ def delete_movie_files(strm_path) -> int:
         nfo = strm.with_suffix(".nfo")
         has_download = any(strm.with_suffix(ext).exists() for ext in MEDIA_SUFFIXES)
         if nfo.exists() and not has_download:
-            nfo.unlink()
+            if not dry_run:
+                nfo.unlink()
             deleted += 1
         parent = strm.parent
-        if parent.is_dir() and not any(parent.iterdir()):
+        if not dry_run and parent.is_dir() and not any(parent.iterdir()):
             parent.rmdir()
     except OSError as e:
         logger.warning(f"Failed to delete movie files at {strm_path}: {e}")
     return deleted
 
 
-def delete_series_files(show_dir) -> int:
+def delete_series_files(show_dir, dry_run: bool = False) -> int:
     """Delete the .strm files under a show directory, and only their own NFOs.
 
     Downloaded episodes, subtitles and artwork in the same folder (merged
@@ -94,10 +98,12 @@ def delete_series_files(show_dir) -> int:
         for strm in list(root.rglob("*.strm")):
             try:
                 nfo = strm.with_suffix(".nfo")
-                strm.unlink()
+                if not dry_run:
+                    strm.unlink()
                 deleted += 1
                 if nfo.exists():
-                    nfo.unlink()
+                    if not dry_run:
+                        nfo.unlink()
                     deleted += 1
             except OSError as e:
                 logger.warning(f"Failed to delete {strm}: {e}")
@@ -107,12 +113,14 @@ def delete_series_files(show_dir) -> int:
             for shared in (root / "tvshow.nfo", root / "season.nfo"):
                 try:
                     if shared.exists():
-                        shared.unlink()
+                        if not dry_run:
+                            shared.unlink()
                         deleted += 1
                 except OSError as e:
                     logger.warning(f"Failed to delete {shared}: {e}")
 
-        _prune_empty_dirs(root)
+        if not dry_run:
+            _prune_empty_dirs(root)
     except OSError as e:
         logger.warning(f"Failed to delete series files at {show_dir}: {e}")
     return deleted

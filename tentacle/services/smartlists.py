@@ -1454,8 +1454,8 @@ def _refresh_smartlist_playlists_inner(db: Session, user_id: int = None, only_na
 
     logger.info(
         f"[SmartLists] Playlist refresh (user {user_id}): {stats['processed']} processed, "
-        f"{stats['created']} created, {stats['updated']} updated, "
-        f"{stats['errors']} errors"
+        f"{stats['created']} created, {stats['updated']} checked, "
+        f"{stats.get('changed', 0)} changed, {stats['errors']} errors"
     )
     return stats
 

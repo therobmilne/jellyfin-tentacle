@@ -278,7 +278,8 @@ def run_scheduled_sync():
                     logger.info(
                         f"[Nightly] Playlists rebuilt for user {user.id}: "
                         f"{stats.get('processed', 0)} processed, {stats.get('created', 0)} created, "
-                        f"{stats.get('updated', 0)} updated, {stats.get('errors', 0)} errors"
+                        f"{stats.get('updated', 0)} checked, {stats.get('changed', 0)} changed, "
+                        f"{stats.get('errors', 0)} errors"
                     )
                     counts = stats.get("item_counts") or {}
                     if counts:
