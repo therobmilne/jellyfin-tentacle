@@ -679,6 +679,9 @@ def _get_wanted(db: Session) -> dict:
     # shows can share a TMDB number. Also remembered past this cache, so a
     # card someone is looking at still means the same episodes after a
     # rebuild pushed its show out of the one-page window.
+    # Its own clock: this block must not lean on a local of the function it
+    # sits in (that function has been split before; a missing name is a 500).
+    shown_at = time.time()
     missing_ids = {}
     for x in searching:
         ids = x.pop("_missing_ids", None)
@@ -686,9 +689,9 @@ def _get_wanted(db: Session) -> dict:
         if x.get("media_type") == "series" and ids is not None and sid:
             missing_ids[sid] = ids
             with _shown_lock:
-                _shown_ids[sid] = (now, ids)
+                _shown_ids[sid] = (shown_at, ids)
     with _shown_lock:
-        for sid in [k for k, (at, _) in _shown_ids.items() if now - at > SHOWN_IDS_KEEP]:
+        for sid in [k for k, (at, _) in _shown_ids.items() if shown_at - at > SHOWN_IDS_KEEP]:
             _shown_ids.pop(sid, None)
     result = {"unreleased": unreleased[:20], "searching": searching[:SEARCHING_LIMIT],
               "_missing_ids": missing_ids,
