@@ -255,7 +255,12 @@ User docs: `docs/features/live-tv.md`.
   timestamped packet), with the bytes before that matching too. No match, a
   loop, a hold past its bounds (45 s of media, half a client's byte slack,
   30 s) or a break while holding sends everything, as before: repeats at
-  worst, never loss. Each reconnect counts as joined (`splices`,
+  worst, never loss. No join for 120 s after a miss that may have skipped
+  something (a longer replay could reach back over it). A re-dial in that
+  window is sent whole but looked through for the drop point: only one
+  without it starts the window again. What a broken hold sends is set aside,
+  so the next re-dial joins at the drop before it or not at all. Each
+  reconnect counts as joined (`splices`,
   `replay_bytes_skipped`) or as a miss (`splice_misses`, logged with the
   time); a joined reconnect no longer marks a recording as damaged.
 - The HLS worker (`hls_to_mpegts()`) classifies statuses with the same

@@ -511,9 +511,9 @@ class ReplaySpliceProperty(unittest.IsolatedAsyncioTestCase):
             real_gap = any(a > max(bb for _, bb in conns[:i]) for i, (a, _) in enumerate(conns) if i)
             orig = livetv._ReplaySplicer._gap
 
-            def gap(self, why, _orig=orig):
+            def gap(self, why, _orig=orig, **kw):
                 reported.append(why)
-                _orig(self, why)
+                _orig(self, why, **kw)
             with patch.object(livetv._ReplaySplicer, "_gap", gap):
                 body, *_ = await _play(script([run(a, b, psi, audio) for a, b in conns], rng))
             got = numbers(body)

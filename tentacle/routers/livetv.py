@@ -346,7 +346,15 @@ class _ReplaySplicer:
     everything held (a repeat of part of the replay, never a loss). No join
     within _SPLICE_AFTER_GAP s of a gap: a replay reaching back over the gap
     would hold seconds the stream never had. Every re-dial that is not joined
-    is counted as a miss and logged: nothing lost is ever reported as joined."""
+    is counted as a miss and logged: nothing lost is ever reported as joined.
+
+    Only a miss that may have skipped something restarts that window. A
+    re-dial too soon after a gap is sent as it comes, but watched for the
+    anchor: a connection that has it started at or before the drop, so sent
+    whole it skipped nothing. What a broken hold sends is set aside: the
+    stream's position stays the drop before it, so the next re-dial can only
+    join there, and that join drops nothing the stream did not already have,
+    whatever the broken connection was."""
 
     def __init__(self, clock, on_gap=None):
         self._clock = clock
@@ -367,6 +375,7 @@ class _ReplaySplicer:
         self._mode = None
         self._since = 0.0
         self._scanned = 0
+        self._aside = 0            # bytes of a broken hold still to go out: not the stream's position
         self.skipped_bytes = 0
         self.splices = 0
         self.misses = 0
@@ -406,6 +415,10 @@ class _ReplaySplicer:
 
     def sent(self, out: bytes) -> None:
         """Record whole packets that went downstream."""
+        if self._aside:
+            k = min(self._aside, len(out))
+            self._aside -= k
+            out = out[k:]
         if not out:
             return
         if self._first is None:
@@ -437,9 +450,10 @@ class _ReplaySplicer:
                 del self._order[:self._order_start]
                 self._order_start = 0
 
-    def _gap(self, why: str) -> None:
+    def _gap(self, why: str, hole: bool = True) -> None:
         self.misses += 1
-        self._last_gap = self._clock()
+        if hole:
+            self._last_gap = self._clock()
         if self._on_gap is not None:
             self._on_gap(why)
 
@@ -472,7 +486,10 @@ class _ReplaySplicer:
         if not self._anchor:
             self._gap("the stream before the drop cannot be recognised")
         elif self._last_gap is not None and self._clock() - self._last_gap < _SPLICE_AFTER_GAP:
-            self._gap("too soon after an earlier gap to join safely")
+            # sent as it comes; whether it skipped anything is known once the
+            # anchor shows up in it (or does not)
+            self._gap("too soon after an earlier gap to join safely", hole=False)
+            self._held, self._mode, self._since, self._scanned = bytearray(), "watch", self._clock(), 0
         else:
             self._held, self._mode, self._since, self._scanned = bytearray(), "probe", self._clock(), 0
 
@@ -509,6 +526,9 @@ class _ReplaySplicer:
             return piece
         held = self._held
         held += piece
+        if self._mode == "watch":
+            self._watched(held, False)
+            return piece
         if self._mode == "probe":
             need = (_SPLICE_PROBE_PACKETS + _SPLICE_RUN) * 188
             if len(held) < need:
@@ -522,9 +542,7 @@ class _ReplaySplicer:
                 return self._release("the provider did not replay what was sent before the drop")
             self._mode = "replay"
             self._scanned = need
-        at = held.find(self._anchor, max(0, self._scanned - len(self._anchor)))
-        while at >= 0 and (at % 188 or not self._ctx_ok(held, at)):
-            at = held.find(self._anchor, at + 1)
+        at = self._anchor_in(held, max(0, self._scanned - len(self._anchor)))
         if at >= 0:
             return self._joined(held, at + len(self._anchor))
         self._scanned = len(held)
@@ -538,12 +556,39 @@ class _ReplaySplicer:
         held = self._held
         if held is None:
             return b""
-        at = held.find(self._anchor)
-        while at >= 0 and (at % 188 or not self._ctx_ok(held, at)):
-            at = held.find(self._anchor, at + 1)
+        if self._mode == "watch":
+            self._watched(held, True)
+            return b""                  # already sent
+        at = self._anchor_in(held, 0)
         if at >= 0:
             return self._joined(held, at + len(self._anchor))
-        return self._release("the connection broke before the join point")
+        # Sent, but set aside: the next re-dial still joins at this drop or
+        # not at all, so these bytes cannot hide a gap from a later join.
+        self._aside = len(held) - len(held) % 188
+        self._held = None
+        self._gap("the connection broke before the join point", hole=False)
+        return bytes(held)
+
+    def _anchor_in(self, held, start: int) -> int:
+        at = held.find(self._anchor, start)
+        while at >= 0 and (at % 188 or not self._ctx_ok(held, at)):
+            at = held.find(self._anchor, at + 1)
+        return at
+
+    def _watched(self, held, ended: bool) -> None:
+        """A re-dial sent as it came, too soon after a gap to join: one that
+        has the anchor started at or before the drop, so it skipped nothing.
+        Without it (or misaligned, or not within _SPLICE_MAX_BYTES / _SECONDS)
+        it may have: the window starts again. Nothing is held back, so the
+        look is bounded by memory only, not by how far a join may reach."""
+        if held[:1] == b"G" and self._anchor_in(held, max(0, self._scanned - len(self._anchor))) >= 0:
+            self._held = None
+        elif (ended or held[:1] != b"G" or len(held) > _SPLICE_MAX_BYTES
+              or self._clock() - self._since > _SPLICE_MAX_SECONDS):
+            self._held = None
+            self._last_gap = self._clock()
+        else:
+            self._scanned = len(held)
 
 
 class _NotAPlaylist(httpx.TransportError):
